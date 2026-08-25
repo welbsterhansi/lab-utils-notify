@@ -1,26 +1,29 @@
 name: Reusable - Notify release base images
 
-# ---------------------------------------------------------------------------
-# Reusable workflow (workflow_call). Does NOT trigger on its own -- must be
-# invoked by a caller workflow.
-#
-# Local invocation:
+# =========================================================================
+# Reusable workflow. Invoked by a caller via
 #   uses: ./.github/workflows/notify-release-images-template.yml
-#
-# Cross-repo invocation (from container-utils, pointing at this repo):
+#   (or cross-repo:)
 #   uses: welbsterhansi/lab-utils-notify/.github/workflows/notify-release-images-template.yml@main
 #
-# Tag resolution priority:
-#   1. Explicit `inputs.tag` (used in manual dispatch)
-#   2. `github.event.release.tag_name` (native release event)
-#   3. Latest release fetched via GitHub API (workflow_run, push, etc.)
-# ---------------------------------------------------------------------------
+# Self-contained: all bash (parse, catalog, diff) lives inline in the
+# run: steps below. No external scripts, no scripts/ directory.
+#
+# REQUIRED configuration on the repo (or org, inherited):
+#   - vars.NOTIFY_APP_CLIENT_ID       GitHub App client id (or numeric app id)
+#   - secrets.NOTIFY_APP_PRIVATE_KEY  GitHub App private key (PEM contents)
+#
+# GitHub App permissions:
+#   - Contents:  Read
+#   - Issues:    Read & write
+#   - Members:   Read      (required for team-mention notifications)
+# =========================================================================
 
 on:
   workflow_call:
     inputs:
       teams:
-        description: "Recipient mentions, one per line (@user or @ORG/team)"
+        description: "Team mentions, one per line. Only @ORG/team format is accepted (bare @user is rejected)."
         required: true
         type: string
       issue_label:
@@ -29,10 +32,14 @@ on:
         type: string
         default: "release-notification"
       tag:
-        description: "Explicit tag override (used in manual test; leave empty for release / workflow_run flows)"
+        description: "Explicit tag override (manual test only)"
         required: false
         type: string
         default: ""
+    secrets:
+      NOTIFY_APP_PRIVATE_KEY:
+        description: "GitHub App private key (PEM contents). See README section 2."
+        required: true
 
 permissions:
   contents: read
@@ -47,16 +54,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.NOTIFY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.NOTIFY_APP_PRIVATE_KEY }}
+
       - name: Resolve release tag
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
           INPUT_TAG: ${{ inputs.tag }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
 
-          # Priority: explicit input > event payload > latest release via API
           if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
           elif [ -n "$RELEASE_TAG" ]; then
@@ -69,8 +82,6 @@ jobs:
             echo "Could not resolve a release tag from event, input, or latest release." >&2
             exit 1
           fi
-
-          # Only allow safe tag characters before any shell use.
           if [[ ! "$TAG" =~ ^[a-zA-Z0-9._+-]+$ ]]; then
             echo "Invalid tag format: $TAG" >&2
             exit 1
@@ -79,11 +90,89 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "Resolved release tag: $TAG"
 
-      - name: Build catalog and diff
+      - name: Build catalog + diff
         shell: bash
         run: |
           set -euo pipefail
-          scripts/notify/build-catalog.sh > release-catalog.md
+
+          # ---- Helpers (inline; no external scripts) ----
+          extract_last_from() {
+            printf '%s\n' "$1" \
+              | grep -E '^[[:space:]]*FROM[[:space:]]+' \
+              | tail -n1 \
+              | sed -E 's/^[[:space:]]*FROM[[:space:]]+//; s/[[:space:]]+AS[[:space:]]+.*$//I; s/[[:space:]]+$//'
+          }
+          parse_ref() {
+            local raw="$1" image tag digest="-"
+            if [[ "$raw" == *"@"* ]]; then
+              digest="${raw##*@}"
+              raw="${raw%@*}"
+            fi
+            local last="${raw##*/}"
+            if [[ "$last" == *":"* ]]; then
+              tag="${raw##*:}"
+              image="${raw%:*}"
+            else
+              tag="latest"
+              image="$raw"
+            fi
+            printf '%s\t%s\t%s\n' "$image" "$tag" "$digest"
+          }
+          list_dockerfiles() {
+            find . -type f -name 'Dockerfile*' -not -path './.git/*' | sort
+          }
+
+          # ---- Resolve previous tag for diff ----
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            PREV_TAG="$(git tag --sort=-creatordate | awk -v cur="$TAG" '$0 != cur' | head -n1 || true)"
+          else
+            PREV_TAG="$(git tag --sort=-creatordate | head -n1 || true)"
+          fi
+          echo "PREV_TAG=${PREV_TAG:-<none>}"
+
+          # ---- Compose the markdown body ----
+          {
+            echo "## Catalog of base images (release \`${TAG}\`)"
+            echo
+            echo "| Stack | Image | Tag | Digest |"
+            echo "|---|---|---|---|"
+            list_dockerfiles | while read -r file; do
+              stack="$(dirname "$file" | sed 's#^\./##')"
+              raw="$(extract_last_from "$(cat "$file")")"
+              if [ -z "$raw" ]; then continue; fi
+              IFS=$'\t' read -r image tag digest < <(parse_ref "$raw")
+              echo "| \`$stack\` | \`$image\` | \`$tag\` | \`$digest\` |"
+            done
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              echo "## Changes since \`${PREV_TAG}\` (for release \`${TAG}\`)"
+              echo
+              echo "| Stack | Previous tag | Current tag | Changed? |"
+              echo "|---|---|---|---|"
+              list_dockerfiles | while read -r file; do
+                stack="$(dirname "$file" | sed 's#^\./##')"
+                relpath="${file#./}"
+                curr_raw="$(extract_last_from "$(cat "$file")")"
+                prev_content="$(git show "$PREV_TAG:$relpath" 2>/dev/null || true)"
+                if [ -z "$prev_content" ]; then
+                  echo "| \`$stack\` | _(new)_ | \`$curr_raw\` | NEW |"
+                  continue
+                fi
+                prev_raw="$(extract_last_from "$prev_content")"
+                IFS=$'\t' read -r _ curr_tag _ < <(parse_ref "$curr_raw")
+                IFS=$'\t' read -r _ prev_tag _ < <(parse_ref "$prev_raw")
+                if [ "$prev_raw" = "$curr_raw" ]; then
+                  verdict="unchanged"
+                else
+                  verdict="**YES**"
+                fi
+                echo "| \`$stack\` | \`$prev_tag\` | \`$curr_tag\` | $verdict |"
+              done
+            else
+              echo "_First release of the repository: no previous tag to compare against._"
+            fi
+          } > release-catalog.md
+
           cat release-catalog.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create announcement Issue
@@ -92,18 +181,17 @@ jobs:
           TEAMS: ${{ inputs.teams }}
           ISSUE_LABEL: ${{ inputs.issue_label }}
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const fs = require('fs');
             const tag = process.env.TAG;
 
-            // Resolve release URL from payload -> API lookup -> tag URL fallback.
+            // Resolve release URL: event payload -> API lookup -> tag URL fallback
             let releaseUrl = context.payload.release?.html_url;
             if (!releaseUrl) {
               try {
                 const { data } = await github.rest.repos.getReleaseByTag({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  tag
+                  owner: context.repo.owner, repo: context.repo.repo, tag
                 });
                 releaseUrl = data.html_url;
               } catch (e) {
@@ -112,17 +200,20 @@ jobs:
             }
 
             const catalog = fs.readFileSync('release-catalog.md', 'utf8');
+
+            // ONLY accept team mentions in @ORG/team format. Reject bare @user.
             const teams = (process.env.TEAMS || '')
-              .split('\n').map(s => s.trim()).filter(s => s.startsWith('@'));
+              .split('\n').map(s => s.trim())
+              .filter(s => s.startsWith('@') && s.includes('/'));
             if (teams.length === 0) {
-              core.setFailed('`teams` input is empty or has no valid mentions (@user or @ORG/team)');
+              core.setFailed('`teams` input has no valid @ORG/team mentions. Bare @user is not accepted.');
               return;
             }
 
             // Human-readable UTC timestamp: YYYY-MM-DD HH:MM UTC
             const now = new Date();
             const pad = n => String(n).padStart(2, '0');
-            const timestamp =
+            const ts =
               `${now.getUTCFullYear()}-${pad(now.getUTCMonth()+1)}-${pad(now.getUTCDate())}` +
               ` ${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())} UTC`;
 
@@ -131,7 +222,7 @@ jobs:
               '',
               `**New release published in \`${context.repo.owner}/${context.repo.repo}\`: \`${tag}\`**`,
               '',
-              `Published at: **${timestamp}**`,
+              `Published at: **${ts}**`,
               `Release notes: ${releaseUrl}`,
               '',
               '> This automated notification lists every base container image shipped in this release.',

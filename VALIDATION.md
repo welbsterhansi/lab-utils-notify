@@ -96,7 +96,8 @@ gh workflow run notify-release-images.yml -f tag=v0.0.0-test
 
 - [ ] Green run in **Actions**. **Evidence 4**: link to the run.
 - [ ] Step `Generate GitHub App token` succeeded (no errors in log).
-- [ ] Issue created in **Issues** with label `release-notification`.
+- [ ] Issue created in **Issues** with label `release-notification` and
+      closed as completed.
       **Evidence 5**: link to the Issue.
 - [ ] In the Issue body, `@<ORG>/lab-notify-test` renders as a
       clickable link (not plain text).

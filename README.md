@@ -29,7 +29,9 @@ Client edits **two things** in the caller:
 
 The template does everything else. No external scripts, no `scripts/`
 directory. The Issue's `@ORG/team` mentions trigger GitHub's native
-notification engine -- GitHub delivers the email, we do not.
+notification engine -- GitHub delivers the email, we do not. The Issue is
+closed automatically after creation so release notifications do not stay in
+the open backlog.
 
 Example of what a developer receives:
 
@@ -180,7 +182,7 @@ gh workflow run notify-release-images.yml -f tag=v0.0.0-test
 ### 5.5. Verify
 
 - Actions tab: green run, step summary shows the catalog
-- Issues tab: new Issue with label `release-notification`
+- Issues tab: new closed Issue with label `release-notification`
 - Each volunteer confirms receipt of the GitHub email in their inbox
 
 See `VALIDATION.md` for the full protocol.

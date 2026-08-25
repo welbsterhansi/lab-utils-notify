@@ -28,6 +28,7 @@ sequenceDiagram
     Template->>Template: inline bash: build catalog + diff
     Template->>API: POST /repos/.../issues (using App token)
     API-->>Template: 201 Created (issue.html_url)
+    Template->>API: PATCH issue state=closed, state_reason=completed
     API->>Notif: parses body for @user / @ORG/team mentions
     Notif->>Notif: resolves team members via App token (Members: Read)
     Notif->>Dev: native email via user's notification settings
@@ -104,6 +105,8 @@ The markdown also goes to `$GITHUB_STEP_SUMMARY`.
    release URL, short explanatory blockquote, catalog markdown, footer
 6. Ensures the `release-notification` label exists
 7. `POST /repos/.../issues`
+8. Closes the Issue as `completed` after creation, keeping the notification
+   history without leaving release announcements in the open backlog
 
 ### 6. GitHub's notification engine
 

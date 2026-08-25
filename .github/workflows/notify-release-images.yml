@@ -1,25 +1,15 @@
 name: Notify release base images
 
 # --------------------------------------------------------------------------
-# O QUE FAZ:
-#   Dispara quando uma Release e publicada. Extrai a imagem base final
-#   (FROM) e a TAG de cada Dockerfile do repo, calcula o diff contra a
-#   release anterior e abre uma Issue mencionando os times consumidores.
-#   O GitHub envia e-mail nativo para cada membro dos times.
+# Caller thin. Todo o comportamento vive em
+# .github/workflows/notify-release-images-template.yml.
 #
-# POR QUE A TAG IMPORTA:
-#   Dev consome `imagem:tag`. Sem a tag, o anuncio nao serve.
-#   A tabela lista imagem, tag, digest em colunas separadas, e a segunda
-#   secao mostra o que mudou desde a release anterior. Isso responde a
-#   pergunta pratica do dev: "preciso rebuildar?".
+# Este arquivo controla APENAS:
+#   1. Quando disparar (release.published + workflow_dispatch)
+#   2. Quem notificar (input `teams` abaixo)
 #
-# NAO USA:
-#   - SMTP externo
-#   - Webhook para sistemas de terceiros
-#   - Actions nao-oficiais (apenas actions/*)
-#
-# COMO EDITAR A LISTA DE DESTINATARIOS:
-#   Altere `env.TEAMS` abaixo. Um team por linha, formato @welbsterhansi/team.
+# Para adicionar/remover destinatarios: editar o bloco `teams:` inline.
+# Para mudar comportamento (label, corpo da issue, etc): editar o template.
 # --------------------------------------------------------------------------
 
 on:
@@ -32,148 +22,14 @@ on:
         required: false
         default: "v0.0.0-test"
 
-permissions:
-  contents: read
-  issues: write
-
-env:
-  # Lista de destinatarios da notificacao. Um por linha. Formatos aceitos:
-  #   @usuario                          -> mention de usuario individual
-  #   @welbsterhansi/nome-do-team       -> mention de team (exige org, nao conta pessoal)
-  #
-  # ATENCAO: conta pessoal (`welbsterhansi`) NAO tem teams. Mentions no formato
-  # @welbsterhansi/team ficam so como texto e nao disparam email. Para o lab
-  # rodando em conta pessoal, use @welbsterhansi (linha 1 abaixo) - GitHub
-  # envia email nativo pro proprio usuario. Ao promover para org real do banco,
-  # trocar por @ORG-real/team1, @ORG-real/team2, etc.
-  TEAMS: |
-    @welbsterhansi
-    @welbsterhansi/container-utils-consumers
-    @welbsterhansi/dev-team-pagamentos
-    @welbsterhansi/dev-team-cartoes
-
-  ISSUE_LABEL: "release-notification"
-
 jobs:
-  notify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout (com historico para diff)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # --- Passo 1: resolve a tag da release ------------------------------
-      # Usa env vars intermediarios para EVITAR injection via ${{ }} em run:
-      - name: Resolve release tag
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
-          INPUT_TAG: ${{ github.event.inputs.tag || '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${RELEASE_TAG:-${INPUT_TAG:-v0.0.0-test}}"
-          # Aceita v1.2.3, v1.2.3-rc.1, 1.2.3+build, etc. Rejeita metacaracteres.
-          if [[ ! "$TAG" =~ ^[a-zA-Z0-9._+-]+$ ]]; then
-            echo "Formato de tag invalido: $TAG" >&2
-            exit 1
-          fi
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "Release tag resolvida: $TAG"
-
-      # --- Passo 2: monta catalogo atual + diff vs release anterior -------
-      # Logica em scripts/notify/ para manter o workflow enxuto e testavel.
-      - name: Monta catalogo e diff de imagens base
-        shell: bash
-        run: |
-          set -euo pipefail
-          scripts/notify/build-catalog.sh > release-catalog.md
-          cat release-catalog.md >> "$GITHUB_STEP_SUMMARY"
-
-      # --- Passo 3: cria Issue mencionando os teams -----------------------
-      # Em prod, ATIVAR GitHub App: descomentar create-github-app-token
-      # e trocar github-token abaixo para ${{ steps.app-token.outputs.token }}.
-      # Sem App, GITHUB_TOKEN nao dispara notificacao confiavel de team mention.
-      #
-      # - name: Gera token da GitHub App
-      #   id: app-token
-      #   uses: actions/create-github-app-token@v1
-      #   with:
-      #     app-id: ${{ secrets.NOTIFY_APP_ID }}
-      #     private-key: ${{ secrets.NOTIFY_APP_PRIVATE_KEY }}
-
-      - name: Cria Issue de anuncio
-        uses: actions/github-script@v7
-        with:
-          # github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const fs = require('fs');
-
-            const tag = process.env.TAG;
-            // Sempre usa URL especifico do tag. Em release publicada, e igual ao html_url.
-            // Em workflow_dispatch aponta pra .../releases/tag/<TAG> (pode 404 se tag for fake).
-            const releaseUrl = context.payload.release?.html_url
-              || `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
-
-            const catalog = fs.readFileSync('release-catalog.md', 'utf8');
-
-            const teams = (process.env.TEAMS || '')
-              .split('\n')
-              .map(s => s.trim())
-              .filter(s => s.length > 0 && s.startsWith('@'));
-
-            if (teams.length === 0) {
-              core.setFailed('Nenhum team configurado em env.TEAMS');
-              return;
-            }
-
-            const mentions = teams.join(' ');
-            const title = `Release ${tag} - imagens base disponiveis`;
-
-            const body = [
-              mentions,
-              '',
-              `Nova release publicada em \`${context.repo.owner}/${context.repo.repo}\`: **${tag}**`,
-              '',
-              `Release notes: ${releaseUrl}`,
-              '',
-              catalog,
-              '',
-              '---',
-              '_Issue gerada automaticamente por `.github/workflows/notify-release-images.yml`._',
-              '_Para nao receber, ajuste https://github.com/settings/notifications ou saia do team._'
-            ].join('\n');
-
-            // Garante label
-            try {
-              await github.rest.issues.getLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: process.env.ISSUE_LABEL
-              });
-            } catch (err) {
-              if (err.status === 404) {
-                await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: process.env.ISSUE_LABEL,
-                  color: '0e8a16',
-                  description: 'Anuncio automatico de nova release de imagens base'
-                });
-              } else {
-                throw err;
-              }
-            }
-
-            // Cria Issue
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body,
-              labels: [process.env.ISSUE_LABEL]
-            });
-
-            core.notice(`Issue criada: ${issue.data.html_url}`);
-            core.notice(`Times mencionados: ${teams.length}`);
+  call:
+    uses: ./.github/workflows/notify-release-images-template.yml
+    with:
+      # Um por linha. Formato @user OU @ORG/team.
+      teams: |
+        @welbsterhansi
+        @welbsterhansi/container-utils-consumers
+        @welbsterhansi/dev-team-pagamentos
+        @welbsterhansi/dev-team-cartoes
+      tag: ${{ github.event.inputs.tag || '' }}

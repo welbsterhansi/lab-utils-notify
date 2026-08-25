@@ -1,0 +1,117 @@
+name: Reusable - Notify release base images
+
+# --------------------------------------------------------------------------
+# TEMPLATE reutilizavel. NAO dispara sozinho. Chamado por outros workflows
+# via `uses: ./.github/workflows/notify-release-images-template.yml`.
+#
+# Uso local (mesmo repo):
+#   uses: ./.github/workflows/notify-release-images-template.yml
+#
+# Uso cross-repo (a partir de container-utils, apontando pra este repo):
+#   uses: welbsterhansi/lab-utils-notify/.github/workflows/notify-release-images-template.yml@main
+#
+# Parametros: ver bloco `inputs` abaixo.
+# --------------------------------------------------------------------------
+
+on:
+  workflow_call:
+    inputs:
+      teams:
+        description: "Mentions destinatarios, um por linha (@user ou @ORG/team)"
+        required: true
+        type: string
+      issue_label:
+        description: "Label aplicada na Issue criada"
+        required: false
+        type: string
+        default: "release-notification"
+      tag:
+        description: "Override da tag (usado em teste manual; vazio em release: published)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+          INPUT_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG:-${INPUT_TAG:-v0.0.0-test}}"
+          if [[ ! "$TAG" =~ ^[a-zA-Z0-9._+-]+$ ]]; then
+            echo "Formato de tag invalido: $TAG" >&2
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Monta catalogo e diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/notify/build-catalog.sh > release-catalog.md
+          cat release-catalog.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cria Issue de anuncio
+        uses: actions/github-script@v7
+        env:
+          TEAMS: ${{ inputs.teams }}
+          ISSUE_LABEL: ${{ inputs.issue_label }}
+        with:
+          script: |
+            const fs = require('fs');
+            const tag = process.env.TAG;
+            const releaseUrl = context.payload.release?.html_url
+              || `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
+            const catalog = fs.readFileSync('release-catalog.md', 'utf8');
+            const teams = (process.env.TEAMS || '')
+              .split('\n').map(s => s.trim()).filter(s => s.startsWith('@'));
+            if (teams.length === 0) {
+              core.setFailed('input `teams` vazio ou sem mentions validas (@user ou @ORG/team)');
+              return;
+            }
+            const body = [
+              teams.join(' '),
+              '',
+              `Nova release publicada em \`${context.repo.owner}/${context.repo.repo}\`: **${tag}**`,
+              '',
+              `Release notes: ${releaseUrl}`,
+              '',
+              catalog,
+              '',
+              '---',
+              '_Issue gerada por reusable workflow `notify-release-images-template`._'
+            ].join('\n');
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: process.env.ISSUE_LABEL
+              });
+            } catch (err) {
+              if (err.status !== 404) throw err;
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: process.env.ISSUE_LABEL, color: '0e8a16',
+                description: 'Anuncio automatico de release'
+              });
+            }
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title: `Release ${tag} - imagens base disponiveis`,
+              body, labels: [process.env.ISSUE_LABEL]
+            });
+            core.notice(`Issue criada: ${issue.data.html_url}`);
+            core.notice(`Destinatarios mencionados: ${teams.length}`);

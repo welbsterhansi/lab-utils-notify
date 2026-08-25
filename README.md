@@ -27,7 +27,7 @@ este setup no repo `container-utils` da org do banco.
   >
   > | Stack | Imagem | Tag | Digest |
   > |---|---|---|---|
-  > | `python-deployment-3.12-slim` | `python` | `3.12-slim-bookworm` | `-` |
+  > | `python-deployment-3.12-slim` | `python` | `3.12-slim-bookworm` | `sha256:3c4d5e...a1b2` |
   >
   > ## Mudancas desde `v1.4.0`
   >
@@ -35,6 +35,9 @@ este setup no repo `container-utils` da org do banco.
   > |---|---|---|---|
   > | `python-deployment-3.12-slim` | `3.12-slim` | `3.12-slim-bookworm` | **SIM** |
   > | `microservices-deployment-openjdk21` | `1.20-2.1727869871` | `1.20-2.1727869871` | sem mudanca |
+
+  Dockerfiles do `container-utils` fixam a imagem final com `tag@sha256:...`
+  (imutabilidade em prod). O workflow le e emite as tres partes separadas.
 
   A segunda tabela responde a pergunta pratica: **"preciso rebuildar?"**.
 

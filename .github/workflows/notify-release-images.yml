@@ -1,24 +1,33 @@
 name: Notify release base images
 
-# --------------------------------------------------------------------------
-# Caller thin. Todo o comportamento vive em
+# ---------------------------------------------------------------------------
+# Thin caller. All behavior lives in the reusable template
 # .github/workflows/notify-release-images-template.yml.
 #
-# Este arquivo controla APENAS:
-#   1. Quando disparar (release.published + workflow_dispatch)
-#   2. Quem notificar (input `teams` abaixo)
+# This file controls ONLY:
+#   1. WHEN to trigger (see `on:` below)
+#   2. WHO to notify (see `teams:` input)
 #
-# Para adicionar/remover destinatarios: editar o bloco `teams:` inline.
-# Para mudar comportamento (label, corpo da issue, etc): editar o template.
-# --------------------------------------------------------------------------
+# Trigger strategy: workflow_run
+#   Fires AFTER the release-creating workflow completes on the main branch.
+#   Works reliably even when the upstream release workflow uses the default
+#   GITHUB_TOKEN (which by design does NOT trigger `release: published` in
+#   downstream workflows -- GitHub's built-in loop protection).
+#
+#   Rename "Release" below to match the exact name of your release-creating
+#   workflow. You can also reference by path, e.g.:
+#     workflows: [.github/workflows/release.yml]
+# ---------------------------------------------------------------------------
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release"]         # <-- rename to your upstream release workflow
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag simulada para teste manual"
+        description: "Tag to simulate (manual test only)"
         required: false
         default: "v0.0.0-test"
 
@@ -28,12 +37,15 @@ permissions:
 
 jobs:
   call:
+    # Only proceed when the upstream release workflow succeeded, or when
+    # explicitly dispatched by a human for manual testing.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: read
       issues: write
     uses: ./.github/workflows/notify-release-images-template.yml
     with:
-      # Um por linha. Formato @user OU @ORG/team.
+      # One per line. Format: @user OR @ORG/team.
       teams: |
         @welbsterhansi
         @welbsterhansi/container-utils-consumers

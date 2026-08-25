@@ -6,7 +6,7 @@ name: Notify release base images
 #
 # EDIT ONLY THESE TWO THINGS when copying to a client repo:
 #   1. `workflows:` -- name of the client's release-creating workflow
-#   2. `teams:`     -- recipient teams (@ORG/team format only)
+#   2. `teams:`     -- recipient mentions (@user for lab, @ORG/team for prod)
 #
 # The template requires:
 #   - secrets.NOTIFY_APP_ID           (repo or org)
@@ -38,10 +38,8 @@ jobs:
       issues: write
     uses: ./.github/workflows/notify-release-images-template.yml
     with:
-      # One per line. Only @ORG/team format is accepted. Bare @user is rejected.
+      # One per line. Use @user for lab tests and @ORG/team in production.
       teams: |
-        @welbsterhansi/container-utils-consumers
-        @welbsterhansi/dev-team-pagamentos
-        @welbsterhansi/dev-team-cartoes
+        @welbsterhansi
       tag: ${{ github.event.inputs.tag || '' }}
     secrets: inherit

@@ -25,7 +25,7 @@ replicate this setup in the bank's `container-utils` repository.
 Client edits **two things** in the caller:
 
 1. `workflows: ["Release"]` -- name of upstream release workflow
-2. `teams:` -- recipient teams (@ORG/team only, bare @user is rejected)
+2. `teams:` -- recipient mentions (@user for lab, @ORG/team in production)
 
 The template does everything else. No external scripts, no `scripts/`
 directory. The Issue's `@ORG/team` mentions trigger GitHub's native
@@ -125,9 +125,9 @@ gh api orgs/<ORG>/teams/container-utils-consumers/memberships/<USER> -X PUT
 **Teams must have `privacy=closed`** for the App to resolve them. Teams
 with `privacy=secret` are invisible even to Apps with `Members: Read`.
 
-Only `@ORG/team` format is accepted. Bare `@user` mentions are rejected
-by the template. This enforces that notifications go through teams
-(auditable, maintainable), not to individuals hardcoded in a workflow.
+Use `@user` only for lab tests. Use `@ORG/team` in production so
+notifications go through teams (auditable, maintainable), not individuals
+hardcoded in a workflow.
 
 ---
 
@@ -205,8 +205,12 @@ Once section 5 passes with real team members confirming email receipt:
 
 ## 7. Adding / removing recipient teams
 
-Edit `teams:` in `notify-release-images.yml`. One per line, `@ORG/team`
-format only. PR, review, merge. Next release uses the new list.
+Edit `teams:` in `notify-release-images.yml`. One per line:
+
+- Lab test: `@user`
+- Production: `@ORG/team`
+
+PR, review, merge. Next release uses the new list.
 
 Best practice: add a `CODEOWNERS` rule requiring platform-team approval
 for changes to `.github/workflows/notify-release-images.yml`.
@@ -224,7 +228,7 @@ for changes to `.github/workflows/notify-release-images.yml`.
 | Catalog table is empty | No `Dockerfile*` in the repo | Verify the expected files exist |
 | `Could not resolve a release tag` | No release exists yet | Publish one, or pass `-f tag=...` in manual dispatch |
 | `Invalid tag format` | Tag has characters outside `[a-zA-Z0-9._+-]` | Rename the tag |
-| `has no valid @ORG/team mentions` | `teams:` contains bare `@user` | Use `@ORG/team` format only |
+| `has no valid mentions` | `teams:` is empty or malformed | Use `@user` or `@ORG/team` |
 | workflow_run does not fire | Upstream workflow name mismatch | Check `workflows: ["<name>"]` matches upstream `name:` |
 
 ---

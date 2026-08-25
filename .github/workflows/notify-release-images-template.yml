@@ -23,7 +23,7 @@ on:
   workflow_call:
     inputs:
       teams:
-        description: "Team mentions, one per line. Only @ORG/team format is accepted (bare @user is rejected)."
+        description: "Recipient mentions, one per line. Supports @user for lab tests and @ORG/team for production."
         required: true
         type: string
       issue_label:
@@ -204,12 +204,12 @@ jobs:
 
             const catalog = fs.readFileSync('release-catalog.md', 'utf8');
 
-            // ONLY accept team mentions in @ORG/team format. Reject bare @user.
+            // Accept @user for lab tests and @ORG/team for production.
             const teams = (process.env.TEAMS || '')
               .split('\n').map(s => s.trim())
-              .filter(s => s.startsWith('@') && s.includes('/'));
+              .filter(s => s.startsWith('@'));
             if (teams.length === 0) {
-              core.setFailed('`teams` input has no valid @ORG/team mentions. Bare @user is not accepted.');
+              core.setFailed('`teams` input has no valid mentions. Use @user or @ORG/team.');
               return;
             }
 

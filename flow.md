@@ -28,7 +28,7 @@ sequenceDiagram
     Template->>Template: inline bash: build catalog + diff
     Template->>API: POST /repos/.../issues (using App token)
     API-->>Template: 201 Created (issue.html_url)
-    API->>Notif: parses body for @ORG/team mentions
+    API->>Notif: parses body for @user / @ORG/team mentions
     Notif->>Notif: resolves team members via App token (Members: Read)
     Notif->>Dev: native email via user's notification settings
     Dev-->>Notif: (optional) reacts or comments on the Issue
@@ -98,8 +98,7 @@ The markdown also goes to `$GITHUB_STEP_SUMMARY`.
 
 1. Reads the resolved `TAG` from env
 2. Resolves the release URL (event payload -> API lookup -> tag URL fallback)
-3. Parses `teams` env, keeping only entries matching `@ORG/team` (bare
-   `@user` is rejected -- forces the discipline of going through teams)
+3. Parses `teams` env, keeping entries that start with `@`
 4. Computes a UTC timestamp: `YYYY-MM-DD HH:MM UTC`
 5. Assembles the body: mentions, headline with the tag, timestamp,
    release URL, short explanatory blockquote, catalog markdown, footer
@@ -108,7 +107,7 @@ The markdown also goes to `$GITHUB_STEP_SUMMARY`.
 
 ### 6. GitHub's notification engine
 
-- GitHub parses the Issue body for `@ORG/team-name` patterns
+- GitHub parses the Issue body for `@user` and `@ORG/team-name` patterns
 - For each team, GitHub uses **the App's `Members: Read` permission** to
   resolve members and enqueue notifications
 - For each member:
@@ -152,6 +151,6 @@ renders but **no notification fires**. That is why the App with
 | Tag has bad characters | Regex validation fails | Rename the tag |
 | Catalog is empty | Zero rows in the table | Verify `Dockerfile*` exist at repo root |
 | Issue creation 403/404 | `Create announcement Issue` errors | App permissions or repo installation |
-| `has no valid @ORG/team` | Teams input rejected | Remove bare `@user`, use `@ORG/team` |
+| `has no valid mentions` | Teams input rejected | Use `@user` or `@ORG/team` |
 | Team mention renders as plain text | App lacks `Members: Read` or team is `privacy=secret` | Fix App or `gh api -X PATCH .../teams/<team> -f privacy=closed` |
 | One dev did not receive | Only that dev | Preferences at `settings/notifications` |

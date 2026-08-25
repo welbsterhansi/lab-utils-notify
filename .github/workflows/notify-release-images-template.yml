@@ -1,32 +1,35 @@
 name: Reusable - Notify release base images
 
-# --------------------------------------------------------------------------
-# TEMPLATE reutilizavel. NAO dispara sozinho. Chamado por outros workflows
-# via `uses: ./.github/workflows/notify-release-images-template.yml`.
+# ---------------------------------------------------------------------------
+# Reusable workflow (workflow_call). Does NOT trigger on its own -- must be
+# invoked by a caller workflow.
 #
-# Uso local (mesmo repo):
+# Local invocation:
 #   uses: ./.github/workflows/notify-release-images-template.yml
 #
-# Uso cross-repo (a partir de container-utils, apontando pra este repo):
+# Cross-repo invocation (from container-utils, pointing at this repo):
 #   uses: welbsterhansi/lab-utils-notify/.github/workflows/notify-release-images-template.yml@main
 #
-# Parametros: ver bloco `inputs` abaixo.
-# --------------------------------------------------------------------------
+# Tag resolution priority:
+#   1. Explicit `inputs.tag` (used in manual dispatch)
+#   2. `github.event.release.tag_name` (native release event)
+#   3. Latest release fetched via GitHub API (workflow_run, push, etc.)
+# ---------------------------------------------------------------------------
 
 on:
   workflow_call:
     inputs:
       teams:
-        description: "Mentions destinatarios, um por linha (@user ou @ORG/team)"
+        description: "Recipient mentions, one per line (@user or @ORG/team)"
         required: true
         type: string
       issue_label:
-        description: "Label aplicada na Issue criada"
+        description: "Label applied to the created Issue"
         required: false
         type: string
         default: "release-notification"
       tag:
-        description: "Override da tag (usado em teste manual; vazio em release: published)"
+        description: "Explicit tag override (used in manual test; leave empty for release / workflow_run flows)"
         required: false
         type: string
         default: ""
@@ -48,24 +51,42 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
           INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${RELEASE_TAG:-${INPUT_TAG:-v0.0.0-test}}"
-          if [[ ! "$TAG" =~ ^[a-zA-Z0-9._+-]+$ ]]; then
-            echo "Formato de tag invalido: $TAG" >&2
+
+          # Priority: explicit input > event payload > latest release via API
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ -n "$RELEASE_TAG" ]; then
+            TAG="$RELEASE_TAG"
+          else
+            TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "Could not resolve a release tag from event, input, or latest release." >&2
             exit 1
           fi
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
 
-      - name: Monta catalogo e diff
+          # Only allow safe tag characters before any shell use.
+          if [[ ! "$TAG" =~ ^[a-zA-Z0-9._+-]+$ ]]; then
+            echo "Invalid tag format: $TAG" >&2
+            exit 1
+          fi
+
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Resolved release tag: $TAG"
+
+      - name: Build catalog and diff
         shell: bash
         run: |
           set -euo pipefail
           scripts/notify/build-catalog.sh > release-catalog.md
           cat release-catalog.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Cria Issue de anuncio
+      - name: Create announcement Issue
         uses: actions/github-script@v7
         env:
           TEAMS: ${{ inputs.teams }}
@@ -74,27 +95,57 @@ jobs:
           script: |
             const fs = require('fs');
             const tag = process.env.TAG;
-            const releaseUrl = context.payload.release?.html_url
-              || `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
+
+            // Resolve release URL from payload -> API lookup -> tag URL fallback.
+            let releaseUrl = context.payload.release?.html_url;
+            if (!releaseUrl) {
+              try {
+                const { data } = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag
+                });
+                releaseUrl = data.html_url;
+              } catch (e) {
+                releaseUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
+              }
+            }
+
             const catalog = fs.readFileSync('release-catalog.md', 'utf8');
             const teams = (process.env.TEAMS || '')
               .split('\n').map(s => s.trim()).filter(s => s.startsWith('@'));
             if (teams.length === 0) {
-              core.setFailed('input `teams` vazio ou sem mentions validas (@user ou @ORG/team)');
+              core.setFailed('`teams` input is empty or has no valid mentions (@user or @ORG/team)');
               return;
             }
+
+            // Human-readable UTC timestamp: YYYY-MM-DD HH:MM UTC
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const timestamp =
+              `${now.getUTCFullYear()}-${pad(now.getUTCMonth()+1)}-${pad(now.getUTCDate())}` +
+              ` ${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())} UTC`;
+
             const body = [
               teams.join(' '),
               '',
-              `Nova release publicada em \`${context.repo.owner}/${context.repo.repo}\`: **${tag}**`,
+              `**New release published in \`${context.repo.owner}/${context.repo.repo}\`: \`${tag}\`**`,
               '',
+              `Published at: **${timestamp}**`,
               `Release notes: ${releaseUrl}`,
+              '',
+              '> This automated notification lists every base container image shipped in this release.',
+              '> The **Catalog** table shows each stack with its image reference, tag, and pinned digest.',
+              '> The **Changes since** table highlights what moved compared to the previous release --',
+              '> use it to decide whether your service needs to be rebuilt.',
               '',
               catalog,
               '',
               '---',
-              '_Issue gerada por reusable workflow `notify-release-images-template`._'
+              '_Generated by reusable workflow `notify-release-images-template`._',
+              '_To stop receiving these notifications, adjust https://github.com/settings/notifications or leave the team._'
             ].join('\n');
+
             try {
               await github.rest.issues.getLabel({
                 owner: context.repo.owner, repo: context.repo.repo,
@@ -105,13 +156,14 @@ jobs:
               await github.rest.issues.createLabel({
                 owner: context.repo.owner, repo: context.repo.repo,
                 name: process.env.ISSUE_LABEL, color: '0e8a16',
-                description: 'Anuncio automatico de release'
+                description: 'Automated release announcement'
               });
             }
+
             const issue = await github.rest.issues.create({
               owner: context.repo.owner, repo: context.repo.repo,
-              title: `Release ${tag} - imagens base disponiveis`,
+              title: `Release ${tag} - base images available`,
               body, labels: [process.env.ISSUE_LABEL]
             });
-            core.notice(`Issue criada: ${issue.data.html_url}`);
-            core.notice(`Destinatarios mencionados: ${teams.length}`);
+            core.notice(`Issue created: ${issue.data.html_url}`);
+            core.notice(`Recipients mentioned: ${teams.length}`);

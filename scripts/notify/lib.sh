@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Funcoes compartilhadas pelos scripts em scripts/notify/.
-# Uso: `source` este arquivo. Nao deve ser executado diretamente.
+# Shared helpers used by scripts under scripts/notify/.
+# Usage: `source` this file. Do NOT execute directly.
 
-# Extrai a ultima linha FROM de um conteudo Dockerfile.
-# Em builds multi-stage a ultima e a imagem final que o dev consome.
+# Extract the last FROM line from Dockerfile content.
+# In multi-stage builds the last FROM is the final runtime image
+# -- the one developers actually consume.
 extract_last_from() {
   printf '%s\n' "$1" \
     | grep -E '^[[:space:]]*FROM[[:space:]]+' \
@@ -11,8 +12,9 @@ extract_last_from() {
     | sed -E 's/^[[:space:]]*FROM[[:space:]]+//; s/[[:space:]]+AS[[:space:]]+.*$//I; s/[[:space:]]+$//'
 }
 
-# Quebra "image[:tag][@digest]" em tres campos separados por TAB.
-# Cobre registry:porta/path:tag (o : da porta nao pode ser confundido com o : da tag).
+# Split "image[:tag][@digest]" into three TAB-separated fields.
+# Correctly handles registry:port/path:tag (the port `:` must not be
+# confused with the tag `:`).
 parse_ref() {
   local raw="$1" image tag digest="-"
   if [[ "$raw" == *"@"* ]]; then
@@ -30,7 +32,7 @@ parse_ref() {
   printf '%s\t%s\t%s\n' "$image" "$tag" "$digest"
 }
 
-# Descobre a tag imediatamente anterior a $1. Vazio se nao houver.
+# Resolve the tag immediately preceding $1. Empty string if none.
 resolve_prev_tag() {
   local current="$1"
   if git rev-parse -q --verify "refs/tags/$current" >/dev/null 2>&1; then
@@ -40,7 +42,7 @@ resolve_prev_tag() {
   fi
 }
 
-# Lista todos os Dockerfiles do repo (excluindo .git), ordenados.
+# List every Dockerfile in the repo (excluding .git), sorted.
 list_dockerfiles() {
   find . -type f -name 'Dockerfile*' -not -path './.git/*' | sort
 }

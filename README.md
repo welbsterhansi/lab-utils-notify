@@ -1,218 +1,262 @@
 # lab-utils-notify
 
-Lab de referencia para notificar times de desenvolvedores sempre que houver
-uma nova release no repositorio `container-utils`. Zero dependencia de SMTP,
-webhook externo ou servico de terceiros. Usa apenas primitivas nativas do
-GitHub (Actions + Issue + team mention + motor de notificacao do proprio
-GitHub).
+Reference lab for notifying developer teams every time a new release is
+published in the `container-utils` repository. Zero SMTP, zero external
+webhooks, zero third-party services. Uses only native GitHub primitives
+(Actions + Issue + team mention + GitHub's own notification engine).
 
-Publico alvo: **analista junior** que precisa entender, testar e replicar
-este setup no repo `container-utils` da org do banco.
-
----
-
-## 1. O que este lab entrega
-
-- **Um workflow pronto** (`.github/workflows/notify-release-images.yml`) que:
-  1. Dispara em toda `release: published` (e permite teste manual)
-  2. Varre todos os `Dockerfile*` do repo
-  3. Extrai a imagem final (`FROM`) e separa em colunas `Imagem`, `Tag`, `Digest`
-  4. Calcula o **diff contra a release anterior** (o que mudou de tag)
-  5. Abre uma Issue mencionando os times consumidores com as duas tabelas
-  6. GitHub envia e-mail nativo para cada membro dos times
-
-  Exemplo do que o dev recebe no corpo da Issue:
-
-  > ## Catalogo de imagens base (release `v1.5.0`)
-  >
-  > | Stack | Imagem | Tag | Digest |
-  > |---|---|---|---|
-  > | `python-deployment-3.12-slim` | `python` | `3.12-slim-bookworm` | `sha256:3c4d5e...a1b2` |
-  >
-  > ## Mudancas desde `v1.4.0`
-  >
-  > | Stack | Tag anterior | Tag atual | Mudou? |
-  > |---|---|---|---|
-  > | `python-deployment-3.12-slim` | `3.12-slim` | `3.12-slim-bookworm` | **SIM** |
-  > | `microservices-deployment-openjdk21` | `1.20-2.1727869871` | `1.20-2.1727869871` | sem mudanca |
-
-  Dockerfiles do `container-utils` fixam a imagem final com `tag@sha256:...`
-  (imutabilidade em prod). O workflow le e emite as tres partes separadas.
-
-  A segunda tabela responde a pergunta pratica: **"preciso rebuildar?"**.
-
-- **Dockerfiles de exemplo na raiz** (`microservices-deployment-openjdk21/`,
-  `python-deployment-3.12-slim/`, `react-deployment-nginx-with-envs/`) que
-  reproduzem a mesma estrutura do `container-utils` real. Servem para testar
-  o workflow neste repo antes de promover pro repo de producao.
-
-- **Documentacao** para o fluxo (`fluxo.md`) e o protocolo de validacao
-  (`VALIDACAO.md`).
+Target audience: a **junior analyst** who needs to understand, test, and
+replicate this setup in the bank's `container-utils` repository.
 
 ---
 
-## 2. Pre-requisitos na org do banco
+## 1. What this lab delivers
 
-Coisas que precisam existir **antes** do workflow rodar. Estas sao tarefas
-de administracao de org, feitas uma unica vez.
+- **A reusable workflow template** (`.github/workflows/notify-release-images-template.yml`)
+  and a **thin caller** (`.github/workflows/notify-release-images.yml`) that:
+  1. Trigger AFTER the client's release-creating workflow completes on `main`
+     (via `workflow_run`), and additionally allow manual test via `workflow_dispatch`.
+  2. Walk every `Dockerfile*` in the repo.
+  3. Extract the final image (`FROM`) and split it into `Image`, `Tag`, `Digest` columns.
+  4. Compute the **diff against the previous release** (what tag/digest moved).
+  5. Open an Issue mentioning the recipient teams with both tables and a UTC timestamp.
+  6. GitHub delivers an email natively to every member of each team.
 
-### 2.1. Teams existentes
+  Example of what a developer receives in the Issue body:
 
-Cada team mencionado no workflow precisa existir na org:
+  > **New release published in `welbsterhansi/container-utils`: `v1.5.0`**
+  >
+  > Published at: **2026-08-25 14:32 UTC**
+  > Release notes: https://github.com/welbsterhansi/container-utils/releases/tag/v1.5.0
+  >
+  > > This automated notification lists every base container image shipped in this release.
+  > > The **Catalog** table shows each stack with its image reference, tag, and pinned digest.
+  > > The **Changes since** table highlights what moved compared to the previous release --
+  > > use it to decide whether your service needs to be rebuilt.
+  >
+  > ## Catalog of base images (release `v1.5.0`)
+  >
+  > | Stack | Image | Tag | Digest |
+  > |---|---|---|---|
+  > | `python-deployment-3.12-slim` | `python` | `3.13-slim-bookworm` | `sha256:9f0e8d...` |
+  >
+  > ## Changes since `v1.4.0` (for release `v1.5.0`)
+  >
+  > | Stack | Previous tag | Current tag | Changed? |
+  > |---|---|---|---|
+  > | `python-deployment-3.12-slim` | `3.12-slim-bookworm` | `3.13-slim-bookworm` | **YES** |
 
-- `@welbsterhansi/container-utils-consumers` (team guarda-chuva, opcional)
+  The `Changes since` table answers the practical question: **"do I need to rebuild?"**.
+
+- **Example Dockerfiles at the repo root** (`microservices-deployment-openjdk21/`,
+  `python-deployment-3.12-slim/`, `react-deployment-nginx-with-envs/`) mirroring the
+  real `container-utils` layout. They exist so you can test the workflow here before
+  promoting to production.
+
+- **Documentation**: this README plus `flow.md` (event flow) and `VALIDATION.md`
+  (delivery-validation protocol).
+
+---
+
+## 2. Prerequisites in the bank's org
+
+Things that must exist **before** the workflow runs. One-time org admin tasks.
+
+### 2.1. Teams
+
+Every team mentioned in the workflow must exist in the org:
+
+- `@welbsterhansi/container-utils-consumers` (umbrella team, optional)
 - `@welbsterhansi/dev-team-pagamentos`
 - `@welbsterhansi/dev-team-cartoes`
-- (adicione outros conforme necessario)
+- (add more as needed)
 
-Como criar (via UI):
-`https://github.com/orgs/welbsterhansi/new-team`
+Create via UI: `https://github.com/orgs/welbsterhansi/new-team`
 
-Como criar (via CLI, precisa `admin:org` no PAT):
+Create via CLI (requires `admin:org` on the PAT):
+
 ```bash
 gh api orgs/welbsterhansi/teams -f name=dev-team-pagamentos -f privacy=closed
-gh api orgs/welbsterhansi/teams/dev-team-pagamentos/memberships/USUARIO -X PUT
+gh api orgs/welbsterhansi/teams/dev-team-pagamentos/memberships/USER -X PUT
 ```
 
-### 2.2. GitHub App para notificacao confiavel (recomendado em prod)
+### 2.2. GitHub App for reliable notification (recommended in production)
 
-Motivo: o `GITHUB_TOKEN` padrao (`github-actions[bot]`) **nao dispara e-mail
-confiavel** em team mentions. Uma GitHub App dedicada resolve.
+Why: the default `GITHUB_TOKEN` (`github-actions[bot]`) **does not reliably
+trigger email notifications** for team mentions. A dedicated GitHub App fixes it.
 
-Passos:
-1. Criar GitHub App em `https://github.com/organizations/welbsterhansi/settings/apps/new`
-   - Permissoes: `Issues: Read & write`, `Members: Read`, `Contents: Read`
-   - Sem webhook, sem callback URL
-2. Instalar a App no repo `container-utils`
-3. Gerar Private Key, baixar o `.pem`
-4. No repo `container-utils`, cadastrar dois secrets:
-   - `NOTIFY_APP_ID` (App ID numerico)
-   - `NOTIFY_APP_PRIVATE_KEY` (conteudo do `.pem`)
-5. Descomentar o step "Gera token da GitHub App" no workflow e trocar
-   `github-token:` para usar `${{ steps.app-token.outputs.token }}`.
+Steps:
 
-**Sem a App, o workflow ainda cria a Issue, mas o e-mail pode nao chegar.**
-Nao promova para producao sem validar a entrega (ver `VALIDACAO.md`).
+1. Create the App at `https://github.com/organizations/welbsterhansi/settings/apps/new`
+   - Permissions: `Issues: Read & write`, `Members: Read`, `Contents: Read`
+   - No webhook, no callback URL
+2. Install the App on the `container-utils` repo
+3. Generate a Private Key, download the `.pem`
+4. On the `container-utils` repo, add two secrets:
+   - `NOTIFY_APP_ID` (numeric App ID)
+   - `NOTIFY_APP_PRIVATE_KEY` (contents of `.pem`)
+5. In the template, uncomment the `create-github-app-token` step and switch
+   `github-token:` to `${{ steps.app-token.outputs.token }}` (already scaffolded).
+
+**Without the App, the Issue is still created but the email may not arrive.**
+Do not promote to production without running `VALIDATION.md`.
 
 ---
 
-## 3. Como testar neste lab (sem tocar em `container-utils`)
+## 3. Trigger strategy
 
-O objetivo aqui e validar que o workflow **funciona** antes de promove-lo.
+The caller (`notify-release-images.yml`) triggers on **`workflow_run`**:
 
-### 3.1. Fork ou push deste lab para a org
+```yaml
+on:
+  workflow_run:
+    workflows: ["Release"]         # <-- name of client's release workflow
+    types: [completed]
+    branches: [main]
+```
+
+This fires whenever the client's release-creating workflow finishes on `main`.
+It works even when the client's release workflow uses the default `GITHUB_TOKEN`
+(which by design does NOT fire `release: published` in downstream workflows --
+GitHub's built-in loop protection).
+
+For manual testing, `workflow_dispatch` is also wired with a `tag` input.
+
+To switch to the plain `release: published` trigger (works only if the client
+uses a PAT or GitHub App token to create releases), swap the `on:` block:
+
+```yaml
+on:
+  release:
+    types: [published]
+```
+
+---
+
+## 4. Testing this lab (without touching `container-utils`)
+
+Goal: prove the workflow works before promoting it.
+
+### 4.1. Fork or push this lab to the org
 
 ```bash
 gh repo create welbsterhansi/lab-utils-notify --source=. --push --private
 ```
 
-### 3.2. Editar a lista de teams no workflow
+### 4.2. Adjust the recipients
 
-Abra `.github/workflows/notify-release-images.yml` e ajuste `env.TEAMS`
-para conter **apenas um team de teste** com voces mesmos como membros:
+Open `.github/workflows/notify-release-images.yml` and set `teams` to just a
+test team with 2-3 volunteer developers:
 
 ```yaml
-env:
-  TEAMS: |
+with:
+  teams: |
     @welbsterhansi/lab-notify-test
 ```
 
-Crie o team `lab-notify-test` na org e adicione 2-3 devs voluntarios.
-
-### 3.3. Disparar teste manual
+### 4.3. Fire the manual test
 
 ```bash
 gh workflow run notify-release-images.yml -f tag=v0.0.0-test
 ```
 
-Ou pela UI: **Actions -> Notify release base images -> Run workflow**.
+Or via UI: **Actions -> Notify release base images -> Run workflow**.
 
-### 3.4. Verificar
+### 4.4. Verify
 
-- Aba **Actions**: run verde, step summary mostra o catalogo de imagens
-- Aba **Issues**: Issue nova com label `release-notification`
-- **Cada membro do team `lab-notify-test`**: e-mail do GitHub na inbox
+- **Actions** tab: run is green, step summary shows the catalog
+- **Issues** tab: new Issue with label `release-notification`
+- **Each volunteer**: GitHub email in their inbox
 
-**Se o e-mail nao chegou:** ver secao Troubleshooting.
-
----
-
-## 4. Como promover para `container-utils`
-
-Depois que o teste no lab passar:
-
-1. Copiar `.github/workflows/notify-release-images.yml` para o mesmo path
-   no repo `container-utils`.
-2. Editar `env.TEAMS` com a lista real de times consumidores.
-3. Configurar os secrets `NOTIFY_APP_ID` e `NOTIFY_APP_PRIVATE_KEY` no repo
-   `container-utils` (ver secao 2.2).
-4. Descomentar o step da GitHub App e o `github-token:` em `github-script`.
-5. Fazer PR, mergear.
-6. Publicar uma release de teste (ou usar `workflow_dispatch`) e validar
-   entrega pelo protocolo em `VALIDACAO.md`.
+If email does not arrive, see the Troubleshooting section.
 
 ---
 
-## 5. Como adicionar/remover times destinatarios
+## 5. Promoting to `container-utils`
 
-Editar `env.TEAMS` no proprio workflow, um team por linha:
+Once the lab test passes:
+
+1. Copy both workflows from `.github/workflows/` to the same path in `container-utils`.
+2. Copy the entire `scripts/notify/` directory to `container-utils`.
+3. In the caller, adjust `workflows: ["Release"]` to match the exact name of the
+   client's release workflow, and set `teams:` to the real consumer teams.
+4. Configure `NOTIFY_APP_ID` and `NOTIFY_APP_PRIVATE_KEY` secrets (section 2.2).
+5. Uncomment the GitHub App token step in the template.
+6. Open PR, review, merge.
+7. Trigger `workflow_dispatch` with `tag=v0.0.0-prod-test` to smoke-test.
+8. Follow `VALIDATION.md` phases 1-5 with real teams before considering it done.
+
+---
+
+## 6. Adding / removing recipient teams
+
+Edit `teams:` in `notify-release-images.yml`, one per line:
 
 ```yaml
-env:
-  TEAMS: |
+with:
+  teams: |
     @welbsterhansi/dev-team-pagamentos
     @welbsterhansi/dev-team-cartoes
-    @welbsterhansi/dev-team-pix        # <-- novo time
+    @welbsterhansi/dev-team-pix        # <-- new team
 ```
 
-PR, review, merge. Proximo release ja usa a nova lista.
+PR, review, merge. The next release uses the new list.
 
-Boa pratica: adicionar regra em `CODEOWNERS` exigindo aprovacao do time de
-plataforma para mudancas em `.github/workflows/notify-release-images.yml`.
+Best practice: add a `CODEOWNERS` rule requiring platform-team approval for
+changes to `.github/workflows/notify-release-images.yml`.
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
-| Sintoma | Causa provavel | Como resolver |
+| Symptom | Likely cause | Resolution |
 |---|---|---|
-| Workflow roda, Issue nao aparece | Sem `permissions: issues: write` | Ja esta no template, verificar se nao foi removido |
-| Issue aparece, e-mail nao chega | Usando `GITHUB_TOKEN`, nao a App | Configurar GitHub App (secao 2.2) |
-| Um dev nao recebeu, outros sim | Dev desativou notificacao de mention | Dev checa em `settings/notifications` |
-| Tabela de imagens vazia | Nao ha `Dockerfile*` no repo | Verificar que o repo tem os arquivos esperados |
-| `Discussion category not found` | Voce copiou versao antiga (Discussion) | Usar este template (Issue), nao o de Discussion |
-| `Nenhum team configurado em env.TEAMS` | Bloco `TEAMS` vazio ou sem `@` | Adicionar teams com prefixo `@welbsterhansi/` |
+| Workflow runs, Issue does not appear | `permissions: issues: write` missing | Already declared in template; verify not stripped |
+| Issue appears, email does not arrive | Using `GITHUB_TOKEN`, not GitHub App | Configure the App (section 2.2) |
+| One developer did not receive, others did | That dev disabled mention notifications | They check `settings/notifications` |
+| Catalog table is empty | No `Dockerfile*` in the repo | Verify the expected files exist |
+| `Could not resolve a release tag...` | No release exists yet | Publish a release first, or pass `-f tag=...` in manual dispatch |
+| `Invalid tag format: ...` | Tag contains characters outside `[a-zA-Z0-9._+-]` | Rename the tag |
+| workflow_run does not fire | Upstream workflow name mismatch | Check `workflows: ["<name>"]` matches the exact `name:` field of the upstream workflow |
 
-Para trace completo: aba **Actions -> run com falha -> log do job**.
+Full logs: **Actions -> failed run -> job log**.
 
 ---
 
-## 7. Arquivos deste lab
+## 8. Files in this lab
 
 ```
 .
-|-- README.md                                     este arquivo
-|-- fluxo.md                                      diagrama e explicacao do fluxo
-|-- VALIDACAO.md                                  protocolo de validacao de entrega
+|-- README.md                                          this file
+|-- flow.md                                            event-flow explanation + diagram
+|-- VALIDATION.md                                      delivery-validation protocol
+|-- claude.md                                          original challenge brief
 |-- .github/
 |   `-- workflows/
-|       `-- notify-release-images.yml             o workflow
+|       |-- notify-release-images.yml                  caller (thin, 55 lines)
+|       `-- notify-release-images-template.yml         reusable template (workflow_call)
+|-- scripts/
+|   `-- notify/
+|       |-- lib.sh                                     pure helpers (parse, list, resolve)
+|       `-- build-catalog.sh                           orchestration (catalog + diff)
 |-- microservices-deployment-openjdk21/
-|   `-- Dockerfile                                exemplo multi-stage (OpenJDK)
+|   `-- Dockerfile                                     multi-stage OpenJDK
 |-- python-deployment-3.12-slim/
-|   `-- Dockerfile                                exemplo single-stage (Python)
+|   `-- Dockerfile                                     single-stage Python
 `-- react-deployment-nginx-with-envs/
-    `-- Dockerfile                                exemplo multi-stage (Node + nginx)
+    `-- Dockerfile                                     multi-stage Node + nginx
 ```
 
-Estrutura espelha container-utils: cada stack tem seu diretorio na raiz
-com um Dockerfile dentro. E o que o workflow procura (find `Dockerfile*`).
+Each stack sits in its own top-level directory with a `Dockerfile` inside,
+mirroring container-utils.
 
 ---
 
-## 8. Referencias
+## 9. References
 
-- Docs oficiais de team mentions: https://docs.github.com/en/organizations/organizing-members-into-teams/setting-your-team-page
-- Docs `actions/github-script`: https://github.com/actions/github-script
-- Docs `actions/create-github-app-token`: https://github.com/actions/create-github-app-token
-- Security hardening para GitHub Actions: https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions
+- Team mentions: https://docs.github.com/en/organizations/organizing-members-into-teams/setting-your-team-page
+- Reusable workflows: https://docs.github.com/en/actions/using-workflows/reusing-workflows
+- `workflow_run` trigger: https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_run
+- `actions/github-script`: https://github.com/actions/github-script
+- `actions/create-github-app-token`: https://github.com/actions/create-github-app-token
+- Actions security hardening: https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions

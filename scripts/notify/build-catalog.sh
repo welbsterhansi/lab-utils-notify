@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Monta o corpo em markdown com o catalogo de imagens base e o diff
+# contra a release anterior. Escreve em stdout.
+#
+# Uso:
+#   TAG=v1.2.3 ./scripts/notify/build-catalog.sh > release-catalog.md
+set -euo pipefail
+
+: "${TAG:?TAG env var required}"
+
+# shellcheck disable=SC1091
+. "$(dirname "$0")/lib.sh"
+
+PREV_TAG="$(resolve_prev_tag "$TAG")"
+echo "PREV_TAG=${PREV_TAG:-<nenhuma>}" >&2
+
+emit_row() {
+  local stack="$1" raw="$2"
+  local image tag digest
+  IFS=$'\t' read -r image tag digest < <(parse_ref "$raw")
+  printf '| `%s` | `%s` | `%s` | `%s` |\n' "$stack" "$image" "$tag" "$digest"
+}
+
+build_catalog() {
+  echo "## Catalogo de imagens base (release \`${TAG}\`)"
+  echo
+  echo "| Stack | Imagem | Tag | Digest |"
+  echo "|---|---|---|---|"
+  list_dockerfiles | while read -r file; do
+    local stack raw
+    stack="$(dirname "$file" | sed 's#^\./##')"
+    raw="$(extract_last_from "$(cat "$file")")"
+    if [ -z "$raw" ]; then continue; fi
+    emit_row "$stack" "$raw"
+  done
+}
+
+build_diff() {
+  if [ -z "$PREV_TAG" ]; then
+    echo "_Primeira release do repo: sem tag anterior para comparar._"
+    return
+  fi
+  echo "## Mudancas desde \`${PREV_TAG}\` (para release \`${TAG}\`)"
+  echo
+  echo "| Stack | Tag anterior | Tag atual | Mudou? |"
+  echo "|---|---|---|---|"
+  list_dockerfiles | while read -r file; do
+    local stack relpath curr_raw prev_content prev_raw
+    local curr_tag prev_tag verdict
+    stack="$(dirname "$file" | sed 's#^\./##')"
+    relpath="${file#./}"
+    curr_raw="$(extract_last_from "$(cat "$file")")"
+    prev_content="$(git show "$PREV_TAG:$relpath" 2>/dev/null || true)"
+    if [ -z "$prev_content" ]; then
+      echo "| \`$stack\` | _(novo)_ | \`$curr_raw\` | NOVO |"
+      continue
+    fi
+    prev_raw="$(extract_last_from "$prev_content")"
+    IFS=$'\t' read -r _ curr_tag _ < <(parse_ref "$curr_raw")
+    IFS=$'\t' read -r _ prev_tag _ < <(parse_ref "$prev_raw")
+    if [ "$prev_raw" = "$curr_raw" ]; then
+      verdict="sem mudanca"
+    else
+      verdict="**SIM**"
+    fi
+    printf '| `%s` | `%s` | `%s` | %s |\n' "$stack" "$prev_tag" "$curr_tag" "$verdict"
+  done
+}
+
+build_catalog
+echo
+build_diff

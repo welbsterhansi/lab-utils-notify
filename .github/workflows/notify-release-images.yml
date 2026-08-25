@@ -83,113 +83,12 @@ jobs:
           echo "Release tag resolvida: $TAG"
 
       # --- Passo 2: monta catalogo atual + diff vs release anterior -------
+      # Logica em scripts/notify/ para manter o workflow enxuto e testavel.
       - name: Monta catalogo e diff de imagens base
         shell: bash
         run: |
           set -euo pipefail
-
-          # 2.1. Descobre tag anterior
-          PREV_TAG=""
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
-            PREV_TAG="$(git tag --sort=-creatordate \
-              | awk -v cur="$TAG" '$0 != cur' \
-              | head -n1 || true)"
-          else
-            # workflow_dispatch com tag inexistente: compara contra a mais recente
-            PREV_TAG="$(git tag --sort=-creatordate | head -n1 || true)"
-          fi
-          echo "Tag anterior para diff: ${PREV_TAG:-<nenhuma>}"
-
-          # 2.2. Funcoes auxiliares
-          # Extrai a ultima linha FROM de um conteudo Dockerfile
-          # (a "ultima" e a imagem final em builds multi-stage).
-          extract_last_from() {
-            printf '%s\n' "$1" \
-              | grep -E '^[[:space:]]*FROM[[:space:]]+' \
-              | tail -n1 \
-              | sed -E 's/^[[:space:]]*FROM[[:space:]]+//; s/[[:space:]]+AS[[:space:]]+.*$//I; s/[[:space:]]+$//'
-          }
-
-          # Quebra uma string image reference em image \t tag \t digest.
-          # Cobre: image, image:tag, image@sha256:..., registry:port/image:tag
-          parse_ref() {
-            local raw="$1" image tag digest="-"
-            if [[ "$raw" == *"@"* ]]; then
-              digest="${raw##*@}"
-              raw="${raw%@*}"
-            fi
-            # Ha ":" APOS a ultima "/" ? Se sim, e tag. Se nao, e porta de registry.
-            local last="${raw##*/}"
-            if [[ "$last" == *":"* ]]; then
-              tag="${raw##*:}"
-              image="${raw%:*}"
-            else
-              tag="latest"
-              image="$raw"
-            fi
-            printf '%s\t%s\t%s\n' "$image" "$tag" "$digest"
-          }
-
-          # 2.3. Constroi arquivo release-catalog.md
-          {
-            echo "## Catalogo de imagens base (release \`${TAG}\`)"
-            echo
-            echo "| Stack | Imagem | Tag | Digest |"
-            echo "|---|---|---|---|"
-
-            find . -type f -name 'Dockerfile*' -not -path './.git/*' \
-              | sort \
-              | while read -r file; do
-                  stack="$(dirname "$file" | sed 's#^\./##')"
-                  raw="$(extract_last_from "$(cat "$file")")"
-                  if [ -z "$raw" ]; then continue; fi
-                  IFS=$'\t' read -r image tag digest < <(parse_ref "$raw")
-                  echo "| \`$stack\` | \`$image\` | \`$tag\` | \`$digest\` |"
-                done
-
-            echo
-
-            if [ -n "$PREV_TAG" ]; then
-              echo "## Mudancas desde \`${PREV_TAG}\`"
-              echo
-              echo "| Stack | Tag anterior | Tag atual | Mudou? |"
-              echo "|---|---|---|---|"
-
-              find . -type f -name 'Dockerfile*' -not -path './.git/*' \
-                | sort \
-                | while read -r file; do
-                    stack="$(dirname "$file" | sed 's#^\./##')"
-                    relpath="${file#./}"
-
-                    curr_raw="$(extract_last_from "$(cat "$file")")"
-                    prev_content="$(git show "$PREV_TAG:$relpath" 2>/dev/null || true)"
-
-                    if [ -z "$prev_content" ]; then
-                      echo "| \`$stack\` | _(novo)_ | \`$curr_raw\` | NOVO |"
-                      continue
-                    fi
-
-                    prev_raw="$(extract_last_from "$prev_content")"
-
-                    # Extrai so a tag pra deixar visualmente obvio quando so a tag mudou
-                    IFS=$'\t' read -r _ curr_tag _ < <(parse_ref "$curr_raw")
-                    if [ -n "$prev_raw" ]; then
-                      IFS=$'\t' read -r _ prev_tag _ < <(parse_ref "$prev_raw")
-                    else
-                      prev_tag=""
-                    fi
-
-                    if [ "$prev_raw" = "$curr_raw" ]; then
-                      echo "| \`$stack\` | \`$prev_tag\` | \`$curr_tag\` | sem mudanca |"
-                    else
-                      echo "| \`$stack\` | \`$prev_tag\` | \`$curr_tag\` | **SIM** |"
-                    fi
-                  done
-            else
-              echo "_Primeira release do repo: sem tag anterior para comparar._"
-            fi
-          } > release-catalog.md
-
+          scripts/notify/build-catalog.sh > release-catalog.md
           cat release-catalog.md >> "$GITHUB_STEP_SUMMARY"
 
       # --- Passo 3: cria Issue mencionando os teams -----------------------
@@ -212,8 +111,10 @@ jobs:
             const fs = require('fs');
 
             const tag = process.env.TAG;
+            // Sempre usa URL especifico do tag. Em release publicada, e igual ao html_url.
+            // Em workflow_dispatch aponta pra .../releases/tag/<TAG> (pode 404 se tag for fake).
             const releaseUrl = context.payload.release?.html_url
-              || `https://github.com/${context.repo.owner}/${context.repo.repo}/releases`;
+              || `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tag}`;
 
             const catalog = fs.readFileSync('release-catalog.md', 'utf8');
 

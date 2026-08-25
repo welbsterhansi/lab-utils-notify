@@ -259,5 +259,13 @@ jobs:
               title: `Release ${tag} - base images available`,
               body, labels: [process.env.ISSUE_LABEL]
             });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.data.number,
+              state: 'closed',
+              state_reason: 'completed'
+            });
             core.notice(`Issue created: ${issue.data.html_url}`);
+            core.notice(`Issue closed as completed: ${issue.data.html_url}`);
             core.notice(`Recipients mentioned: ${teams.length}`);

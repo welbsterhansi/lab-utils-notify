@@ -127,7 +127,7 @@ jobs:
               tag="latest"
               image="$raw"
             fi
-            printf '%s\t%s\t%s' "$image" "$tag" "$digest"
+            printf '%s\t%s\t%s\n' "$image" "$tag" "$digest"
           }
 
           # 2.3. Constroi arquivo release-catalog.md

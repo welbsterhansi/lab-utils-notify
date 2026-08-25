@@ -22,8 +22,15 @@ on:
         required: false
         default: "v0.0.0-test"
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   call:
+    permissions:
+      contents: read
+      issues: write
     uses: ./.github/workflows/notify-release-images-template.yml
     with:
       # Um por linha. Formato @user OU @ORG/team.

@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine@sha256:4d5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890a1b2c3 AS builder
 
 WORKDIR /app
 COPY package*.json ./
@@ -6,7 +6,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890a1b2c3d4
 
 COPY --from=builder /app/build /usr/share/nginx/html
 COPY nginx/default.conf /etc/nginx/conf.d/default.conf

@@ -9,7 +9,7 @@ name: Notify release base images
 #   2. `teams:`     -- recipient teams (@ORG/team format only)
 #
 # The template requires:
-#   - vars.NOTIFY_APP_CLIENT_ID       (repo or org)
+#   - secrets.NOTIFY_APP_ID           (repo or org)
 #   - secrets.NOTIFY_APP_PRIVATE_KEY  (repo or org)
 # See README section 2 for GitHub App setup.
 # ---------------------------------------------------------------------------

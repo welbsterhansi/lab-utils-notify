@@ -10,7 +10,7 @@ name: Reusable - Notify release base images
 # run: steps below. No external scripts, no scripts/ directory.
 #
 # REQUIRED configuration on the repo (or org, inherited):
-#   - vars.NOTIFY_APP_CLIENT_ID       GitHub App client id (or numeric app id)
+#   - secrets.NOTIFY_APP_ID           GitHub App numeric app id
 #   - secrets.NOTIFY_APP_PRIVATE_KEY  GitHub App private key (PEM contents)
 #
 # GitHub App permissions:
@@ -37,6 +37,9 @@ on:
         type: string
         default: ""
     secrets:
+      NOTIFY_APP_ID:
+        description: "GitHub App numeric App ID."
+        required: true
       NOTIFY_APP_PRIVATE_KEY:
         description: "GitHub App private key (PEM contents). See README section 2."
         required: true
@@ -58,7 +61,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.NOTIFY_APP_CLIENT_ID }}
+          app-id: ${{ secrets.NOTIFY_APP_ID }}
           private-key: ${{ secrets.NOTIFY_APP_PRIVATE_KEY }}
 
       - name: Resolve release tag

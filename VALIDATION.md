@@ -60,11 +60,10 @@ Follow README section 2 in full. Verify:
 
 - [ ] App created with permissions: `Contents: Read`, `Issues: R&W`, `Members: Read`
 - [ ] App installed on the `lab-utils-notify` repo
-- [ ] `vars.NOTIFY_APP_CLIENT_ID` set on the repo (or org)
+- [ ] `secrets.NOTIFY_APP_ID` set on the repo (or org)
 - [ ] `secrets.NOTIFY_APP_PRIVATE_KEY` set on the repo (or org)
 
-**Evidence 3**: screenshots of the vars page and secrets page (values
-redacted).
+**Evidence 3**: screenshots of the secrets page (values redacted).
 
 ### 1.4. Push the lab and point at the test team
 
@@ -171,8 +170,8 @@ Only after Phase 2 passes 100%:
 - [ ] Rename `workflows: ["Release"]` to match the client's release workflow
 - [ ] Set `teams:` in the caller to the real consumer teams
 - [ ] Install the App on `container-utils` (or reuse org-level installation)
-- [ ] Set `NOTIFY_APP_CLIENT_ID` and `NOTIFY_APP_PRIVATE_KEY` on
-      `container-utils` (or inherit from org)
+- [ ] Set `NOTIFY_APP_ID` and `NOTIFY_APP_PRIVATE_KEY` on
+      `container-utils` as secrets (or inherit from org)
 - [ ] Open PR, review, merge
 - [ ] Dispatch `-f tag=v0.0.0-prod-test` on `container-utils`
 - [ ] Confirm one member from each real team received the email

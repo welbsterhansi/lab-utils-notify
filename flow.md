@@ -56,7 +56,7 @@ The caller passes `teams`, optional `issue_label` and `tag`, plus
 repo with full history, then generates a GitHub App installation token
 via `actions/create-github-app-token@v3` using:
 
-- `app-id: ${{ vars.NOTIFY_APP_CLIENT_ID }}`
+- `app-id: ${{ secrets.NOTIFY_APP_ID }}`
 - `private-key: ${{ secrets.NOTIFY_APP_PRIVATE_KEY }}`
 
 That token is used by every subsequent API call. `GITHUB_TOKEN` is

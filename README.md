@@ -88,20 +88,20 @@ resolve team members for mention notifications, so we do not use it.
 
 ### 2.3. Configure the repo
 
-- **Repository variable** `NOTIFY_APP_CLIENT_ID`:
-  Settings -> Secrets and variables -> Actions -> Variables tab -> New
-  variable. Paste the App's Client ID.
+- **Repository secret** `NOTIFY_APP_ID`:
+  Settings -> Secrets and variables -> Actions -> Secrets tab -> New
+  repository secret. Paste the numeric App ID.
 - **Repository secret** `NOTIFY_APP_PRIVATE_KEY`:
   Settings -> Secrets and variables -> Actions -> Secrets tab -> New
   repository secret. Paste the **full contents** of the `.pem` file
   (including `-----BEGIN...` and `-----END...` lines).
 
 Both can also be defined at the **organization level** so multiple repos
-share the same App -- see GitHub docs for org-level vars/secrets.
+share the same App -- see GitHub docs for org-level secrets.
 
 ### 2.4. Verify
 
-Once the vars/secrets exist, trigger `workflow_dispatch` and confirm:
+Once the secrets exist, trigger `workflow_dispatch` and confirm:
 
 - The step `Generate GitHub App token` succeeds
 - The Issue is created and the `@ORG/team` mentions render as clickable
@@ -194,8 +194,8 @@ Once section 5 passes with real team members confirming email receipt:
 1. Copy both workflow files to `container-utils/.github/workflows/`
 2. In the caller, set `workflows: ["<upstream-workflow-name>"]` and
    `teams:` with the real consumer teams
-3. Configure `NOTIFY_APP_CLIENT_ID` (var) and `NOTIFY_APP_PRIVATE_KEY`
-   (secret) on `container-utils` -- or use org-level values
+3. Configure `NOTIFY_APP_ID` and `NOTIFY_APP_PRIVATE_KEY`
+   as secrets on `container-utils` -- or use org-level secrets
 4. Ensure the App is installed on `container-utils`
 5. Open PR, review, merge
 6. Manually dispatch `-f tag=v0.0.0-prod-test` to smoke-test
